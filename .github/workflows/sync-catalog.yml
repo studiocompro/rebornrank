@@ -14,44 +14,204 @@ permissions:
 
 concurrency:
   group: rebornrank-catalog-sync
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
-  sync:
+  sync_1:
+    name: Catalogue 1/6
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 12
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-
-      - name: Enrich local catalogue from MyAnimeList via Jikan
-        run: python sync_catalog.py
-
-      - name: Show catalogue statistics
-        run: |
-          python - <<'PY'
-          import json
-          data = json.load(open('catalog.json', encoding='utf-8'))
-          print('Entries:', len(data))
-          print('Covers:', sum(bool(x.get('cover')) for x in data))
-          print('Descriptions:', sum(bool(x.get('description')) for x in data))
-          print('Jikan/MAL IDs:', sum(bool(x.get('jikanId') or x.get('malId')) for x in data))
-          PY
-
-      - name: Commit refreshed catalogue
+      - name: Enrich entries 1-28
+        run: python -u sync_catalog.py --start 0 --count 28
+      - name: Commit slice
         shell: bash
         run: |
           if git diff --quiet -- catalog.json; then
-            echo "No catalogue changes."
+            echo "No changes in this slice."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add catalog.json
-          git commit -m "Update RebornRank catalogue from Jikan [skip ci]"
-          git push
+          git commit -m "Update RebornRank catalogue 1/6 [skip ci]"
+          git pull --rebase origin main
+          git push origin main
+
+  sync_2:
+    name: Catalogue 2/6
+    needs: sync_1
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Enrich entries 29-56
+        run: python -u sync_catalog.py --start 28 --count 28
+      - name: Commit slice
+        shell: bash
+        run: |
+          if git diff --quiet -- catalog.json; then
+            echo "No changes in this slice."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add catalog.json
+          git commit -m "Update RebornRank catalogue 2/6 [skip ci]"
+          git pull --rebase origin main
+          git push origin main
+
+  sync_3:
+    name: Catalogue 3/6
+    needs: sync_2
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Enrich entries 57-84
+        run: python -u sync_catalog.py --start 56 --count 28
+      - name: Commit slice
+        shell: bash
+        run: |
+          if git diff --quiet -- catalog.json; then
+            echo "No changes in this slice."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add catalog.json
+          git commit -m "Update RebornRank catalogue 3/6 [skip ci]"
+          git pull --rebase origin main
+          git push origin main
+
+  sync_4:
+    name: Catalogue 4/6
+    needs: sync_3
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Enrich entries 85-112
+        run: python -u sync_catalog.py --start 84 --count 28
+      - name: Commit slice
+        shell: bash
+        run: |
+          if git diff --quiet -- catalog.json; then
+            echo "No changes in this slice."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add catalog.json
+          git commit -m "Update RebornRank catalogue 4/6 [skip ci]"
+          git pull --rebase origin main
+          git push origin main
+
+  sync_5:
+    name: Catalogue 5/6
+    needs: sync_4
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Enrich entries 113-140
+        run: python -u sync_catalog.py --start 112 --count 28
+      - name: Commit slice
+        shell: bash
+        run: |
+          if git diff --quiet -- catalog.json; then
+            echo "No changes in this slice."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add catalog.json
+          git commit -m "Update RebornRank catalogue 5/6 [skip ci]"
+          git pull --rebase origin main
+          git push origin main
+
+  sync_6:
+    name: Catalogue 6/6
+    needs: sync_5
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Enrich entries 141-165
+        run: python -u sync_catalog.py --start 140 --count 28
+      - name: Commit slice
+        shell: bash
+        run: |
+          if git diff --quiet -- catalog.json; then
+            echo "No changes in this slice."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add catalog.json
+          git commit -m "Update RebornRank catalogue 6/6 [skip ci]"
+          git pull --rebase origin main
+          git push origin main
+
+  summary:
+    name: Final catalogue statistics
+    needs: sync_6
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+      - name: Show final statistics
+        run: |
+          python - <<'PY'
+          import json
+          d=json.load(open("catalog.json",encoding="utf-8"))
+          n=len(d)
+          covers=sum(bool(x.get("cover")) for x in d)
+          ids=sum(bool(x.get("malId") or x.get("jikanId")) for x in d)
+          desc=sum(bool(x.get("description")) for x in d)
+          print(f"Entries: {n}")
+          print(f"Covers: {covers}/{n}")
+          print(f"MAL/Jikan IDs: {ids}/{n}")
+          print(f"Descriptions: {desc}/{n}")
+          if covers == 0:
+              raise SystemExit("ERROR: catalogue still has 0 covers")
+          PY
