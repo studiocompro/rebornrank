@@ -12,21 +12,36 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: rebornrank-catalog-sync
+  cancel-in-progress: false
+
 jobs:
   sync:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - name: Enrich static catalogue from AniList
+      - name: Enrich local catalogue from MyAnimeList via Jikan
         run: python sync_catalog.py
+
+      - name: Show catalogue statistics
+        run: |
+          python - <<'PY'
+          import json
+          data = json.load(open('catalog.json', encoding='utf-8'))
+          print('Entries:', len(data))
+          print('Covers:', sum(bool(x.get('cover')) for x in data))
+          print('Descriptions:', sum(bool(x.get('description')) for x in data))
+          print('Jikan/MAL IDs:', sum(bool(x.get('jikanId') or x.get('malId')) for x in data))
+          PY
 
       - name: Commit refreshed catalogue
         shell: bash
@@ -38,5 +53,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add catalog.json
-          git commit -m "Update RebornRank local catalogue [skip ci]"
+          git commit -m "Update RebornRank catalogue from Jikan [skip ci]"
           git push
