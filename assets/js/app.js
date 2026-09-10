@@ -55,18 +55,52 @@
   let lastRequestAt=0;
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   async function gql(query,variables,cacheKey){
-    const key='rr:'+cacheKey+':v10'; const ttl=(cfg.cacheHours||12)*3600e3;
-    try{const hit=JSON.parse(localStorage.getItem(key)||'null');if(hit&&Date.now()-hit.ts<ttl)return hit.data}catch(e){}
-    // Small client-side gap helps avoid burst limiting while keeping the UI responsive.
-    const gap=180; const wait=Math.max(0,gap-(Date.now()-lastRequestAt)); if(wait) await sleep(wait); lastRequestAt=Date.now();
+    const key='rr:'+cacheKey+':v11'; const ttl=(cfg.cacheHours||12)*3600e3;
+    let stale=null;
+    try{
+      const hit=JSON.parse(localStorage.getItem(key)||'null');
+      if(hit){stale=hit.data;if(Date.now()-hit.ts<ttl)return hit.data;}
+    }catch(e){}
+
+    // AniList is temporarily limited to 30 requests/minute. Space requests out
+    // and reuse cache aggressively instead of bursting several calls at once.
+    const gap=2100;
+    const wait=Math.max(0,gap-(Date.now()-lastRequestAt));
+    if(wait) await sleep(wait);
+    lastRequestAt=Date.now();
+
     let tries=0;
     while(tries<3){
-      const r=await fetch('https://graphql.anilist.co',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({query,variables})});
-      if(r.status===429){tries++; const retry=Number(r.headers.get('Retry-After')||2); await sleep(Math.min(10000,retry*1000)); continue;}
-      if(!r.ok)throw new Error('API '+r.status); const j=await r.json(); if(j.errors)throw new Error(j.errors[0]?.message||'GraphQL');
-      try{localStorage.setItem(key,JSON.stringify({ts:Date.now(),data:j.data}))}catch(e){} return j.data;
+      let r;
+      try{
+        r=await fetch('https://graphql.anilist.co',{
+          method:'POST',
+          headers:{'Content-Type':'application/json','Accept':'application/json'},
+          body:JSON.stringify({query,variables})
+        });
+      }catch(err){
+        // AniList 429 responses can surface as a generic CORS/network error in browsers.
+        tries++;
+        if(tries<3){await sleep(2500*tries);continue;}
+        if(stale)return stale;
+        throw err;
+      }
+
+      if(r.status===429){
+        tries++;
+        const retry=Math.max(2,Number(r.headers.get('Retry-After')||5));
+        if(tries<3){await sleep(Math.min(15000,retry*1000));continue;}
+        if(stale)return stale;
+        throw new Error('API rate limit');
+      }
+      if(!r.ok){if(stale)return stale;throw new Error('API '+r.status);}
+      const j=await r.json();
+      if(j.errors){if(stale)return stale;throw new Error(j.errors[0]?.message||'GraphQL');}
+      try{localStorage.setItem(key,JSON.stringify({ts:Date.now(),data:j.data}))}catch(e){}
+      return j.data;
     }
-    throw new Error('API rate limit');
+    if(stale)return stale;
+    throw new Error('API unavailable');
   }
 
   // List queries are intentionally leaner than detail queries: this keeps multi-tag ranking scans responsive.
@@ -117,28 +151,46 @@
     const maxPages=Math.min(cfg.ranking?.maxScanPages||4,opt.gems?(cfg.hiddenGem?.scanPages||3):(c.pages||cfg.ranking?.defaultScanPages||2));
     const scoreGt=opt.gems?Math.max(0,(cfg.hiddenGem?.minScore||68)-1):null;
     const popLt=opt.gems?(cfg.hiddenGem?.maxPopularity||15000)+1:null;
-    let all=[];
+    const map=new Map();
     for(let page=1;page<=maxPages;page++){
       let pg;
       try{pg=await fetchUnionPage(c.tags,{...opt,scoreGt,popLt},page)}catch(e){if(page===1)throw e;break;}
-      all=all.concat(pg.media||[]); if(!pg.hasNextPage)break;
+      (pg.media||[]).filter(m=>matchesCategory(m,c)).forEach(m=>map.set(m.id,m));
+      // Once we have enough valid candidates for a Top 50, stop scanning extra pages.
+      if(map.size>=60 || !pg.hasNextPage)break;
     }
-    const map=new Map(); all.filter(m=>matchesCategory(m,c)).forEach(m=>map.set(m.id,m)); return [...map.values()];
+    return [...map.values()];
+  }
+
+
+  // Default rankings are mixed: Anime + Manga/Manhwa/Manhua. Visitors can still filter each medium.
+  async function fetchCategoryDisplay(slug,opt={}){
+    const type=opt.type||'ALL';
+    if(type!=='ALL') return fetchCategorySafe(slug,opt);
+    const common={...opt}; delete common.type;
+    // Keep the default mixed ranking focused on comics + animation; novels have their own filter.
+    const mangaFormat=common.format||'COMICS';
+    const manga=await fetchCategorySafe(slug,{...common,type:'MANGA',format:mangaFormat});
+    const anime=await fetchCategorySafe(slug,{...common,type:'ANIME',format:null});
+    const map=new Map(); [...manga,...anime].forEach(m=>map.set(m.id,m));
+    return [...map.values()];
   }
 
   function displayTitle(m){if(locale==='ja'&&m.countryOfOrigin==='JP')return m.title.native||m.title.romaji; if(locale==='ko'&&m.countryOfOrigin==='KR')return m.title.native||m.title.english||m.title.romaji; if(locale==='zh'&&(m.countryOfOrigin==='CN'||m.countryOfOrigin==='TW'))return m.title.native||m.title.english||m.title.romaji; return m.title.english||m.title.romaji||m.title.native||'—'}
   function sortMedia(arr,sort,gems=false){if(gems){return arr.filter(m=>(m.averageScore||0)>=(cfg.hiddenGem?.minScore||68)&&(m.popularity||0)<=(cfg.hiddenGem?.maxPopularity||15000)).sort((a,b)=>gemScore(b)-gemScore(a))} const key=sort||'SCORE_DESC'; return arr.sort((a,b)=> key==='POPULARITY_DESC'?(b.popularity||0)-(a.popularity||0):key==='TRENDING_DESC'?(b.trending||0)-(a.trending||0):key==='START_DATE_DESC'?(b.startDate?.year||0)-(a.startDate?.year||0):(b.averageScore||0)-(a.averageScore||0))}
   const gemScore=m=>(m.averageScore||0)-Math.log10((m.popularity||0)+10)*5+(m.favourites||0)/5000;
-  function card(m,i){const tags=(m.tags||[]).filter(x=>!x.isMediaSpoiler&&!x.isGeneralSpoiler).sort((a,b)=>(b.rank||0)-(a.rank||0)).slice(0,3); const title=displayTitle(m); return `<article class="media-card"><a class="card-link" href="${langPrefix()}fiche.html?id=${m.id}"><div class="cover-wrap"><img loading="lazy" src="${esc(m.coverImage?.extraLarge||m.coverImage?.large||'')}" alt="${esc(title)}"><span class="rank">#${i+1}</span><span class="origin">${flag(m.countryOfOrigin)}</span></div><div class="media-body"><div class="media-title">${esc(title)}</div><div class="native-title">${esc(m.title.native||m.title.romaji||'')}</div><div class="statline"><span class="score">★ ${m.averageScore||'—'}</span><span>👥 ${Intl.NumberFormat(locale).format(m.popularity||0)}</span></div><div class="tags">${tags.map(x=>`<span>${esc(x.name)}</span>`).join('')}</div></div></a></article>`}
+  function mediaKind(m){if(m.type==='ANIME')return `🎬 ${t.anime||'Anime'}`;if(m.countryOfOrigin==='KR')return `📚 ${t.manhwa||'Manhwa'}`;if(m.countryOfOrigin==='CN'||m.countryOfOrigin==='TW')return `📚 ${t.manhua||'Manhua'}`;return `📚 ${t.manga||'Manga'}`}
+  function card(m,i){const tags=(m.tags||[]).filter(x=>!x.isMediaSpoiler&&!x.isGeneralSpoiler).sort((a,b)=>(b.rank||0)-(a.rank||0)).slice(0,3); const title=displayTitle(m); return `<article class="media-card"><a class="card-link" href="${langPrefix()}fiche.html?id=${m.id}"><div class="cover-wrap"><img loading="lazy" src="${esc(m.coverImage?.extraLarge||m.coverImage?.large||'')}" alt="${esc(title)}"><span class="rank">#${i+1}</span><span class="origin">${flag(m.countryOfOrigin)}</span></div><div class="media-body"><div class="media-title">${esc(title)}</div><div class="native-title">${esc(m.title.native||m.title.romaji||'')}</div><div class="statline"><span class="score">★ ${m.averageScore||'—'}</span><span>👥 ${Intl.NumberFormat(locale).format(m.popularity||0)}</span></div><div class="tags"><span>${esc(mediaKind(m))}</span>${tags.map(x=>`<span>${esc(x.name)}</span>`).join('')}</div></div></a></article>`}
   function originalCard(){const o=cfg.originalWork||{}; if(!o.enabled)return ''; const href=o.url||cfg.forgottenSourceUrl||`${langPrefix()}soutenir.html`; const cover=o.coverUrl?`<img loading="lazy" src="${esc(o.coverUrl)}" alt="${esc(o.title||'Forgotten Source')}">`:`<div class="fs-mini-cover"><span>FORGOTTEN</span><strong>SOURCE</strong><small>MANGA</small></div>`; return `<article class="media-card creator-media-card"><a class="card-link" href="${esc(href)}"><div class="cover-wrap">${cover}<span class="rank creator-rank">★</span><span class="origin">FS</span></div><div class="media-body"><div class="creator-label">${esc(t.creator_project||'Creator project')} · ${esc(t.creator_unranked||'Unranked')}</div><div class="media-title">${esc(o.title||'Forgotten Source')}</div><div class="native-title">${esc(t.creator_note||'Original manga in development.')}</div><div class="tags"><span>Manga</span><span>Original</span><span>Source Studio</span></div></div></a></article>`}
   function cardsWithOriginal(arr){const after=Math.max(1,cfg.originalWork?.insertAfter||10); const chunks=arr.map(card); if(cfg.originalWork?.enabled)chunks.splice(Math.min(after,chunks.length),0,originalCard()); const ad='<div class="ad-slot ad-inline ranking-ad" data-ad="inFeed"></div>'; [34,17].forEach(pos=>{if(chunks.length>pos)chunks.splice(pos,0,ad)}); return chunks.join('')}
 
-  async function renderRanking(el){const rp=new URLSearchParams(location.search); const slug=rp.get('theme')||el.dataset.category||'isekai'; const type=rp.get('type')||el.dataset.type||'MANGA'; const country=rp.get('country')||el.dataset.country||null; const sort=rp.get('sort')||el.dataset.sort||'SCORE_DESC'; const gems=el.dataset.gems==='1'; const format=rp.get('format')||el.dataset.format||(type==='MANGA'?'COMICS':null); el.innerHTML=`<div class="loading">${esc(t.loading||'Loading…')}</div>`; try{let arr=await fetchCategorySafe(slug,{type,country,format,sort:[sort,'POPULARITY_DESC'],gems}); arr=sortMedia(arr,sort,gems).slice(0,50); el.innerHTML=arr.length?cardsWithOriginal(arr):`<div class="empty">${esc(t.no_results||'No results')}</div>`; qa('[data-ad="inFeed"]',el).forEach(x=>mountAd(x,'inFeed'))}catch(e){console.error(e);el.innerHTML=`<div class="error">${esc(t.error||'Error')}</div>`}}
+  async function renderRanking(el){const rp=new URLSearchParams(location.search); const slug=rp.get('theme')||el.dataset.category||'isekai'; const type=rp.get('type')||el.dataset.type||'ALL'; const country=rp.get('country')||el.dataset.country||null; const sort=rp.get('sort')||el.dataset.sort||'SCORE_DESC'; const gems=el.dataset.gems==='1'; const format=rp.get('format')||el.dataset.format||(type==='MANGA'?'COMICS':null); el.innerHTML=`<div class="loading">${esc(t.loading||'Loading…')}</div>`; try{let arr=await fetchCategoryDisplay(slug,{type,country,format,sort:[sort,'POPULARITY_DESC'],gems}); arr=sortMedia(arr,sort,gems).slice(0,50); el.innerHTML=arr.length?cardsWithOriginal(arr):`<div class="empty">${esc(t.no_results||'No results')}</div>`; qa('[data-ad="inFeed"]',el).forEach(x=>mountAd(x,'inFeed'))}catch(e){console.error(e);el.innerHTML=`<div class="error">${esc(t.error||'Error')}</div>`}}
   qa('[data-ranking]').forEach(renderRanking);
 
   async function searchMedia(term,opt={}){const query=`query($page:Int,$type:MediaType,$search:String,$countries:[CountryCode],$status:MediaStatus,$sort:[MediaSort],$formats:[MediaFormat]){Page(page:$page,perPage:50){media(type:$type,search:$search,countryOfOrigin_in:$countries,status:$status,sort:$sort,format_in:$formats,isAdult:false){${listFields}}}}`; const variables={page:1,type:opt.type||'MANGA',search:term||null,countries:countryList(opt.country),status:opt.status||null,sort:opt.sort||['POPULARITY_DESC'],formats:formatList(opt.type||'MANGA',opt.format)};const data=(await gql(query,variables,'search:'+JSON.stringify(variables))).Page.media;return data.filter(isSpecialtyMedia)}
+  async function searchMediaDisplay(term,opt={}){if((opt.type||'ALL')!=='ALL')return searchMedia(term,opt);const common={...opt};delete common.type;const manga=await searchMedia(term,{...common,type:'MANGA',format:common.format||'COMICS'});const anime=await searchMedia(term,{...common,type:'ANIME',format:null});const map=new Map();[...manga,...anime].forEach(m=>map.set(m.id,m));return [...map.values()]}
   async function renderDiscover(){const out=q('#discoverResults');if(!out)return; const params=new URLSearchParams(location.search); const form=q('#filters'); const field=n=>q(`[name=${n}]`,form); if(params.get('q'))q('#discoverQ').value=params.get('q'); ['type','format','country','theme','sort','status'].forEach(n=>{if(params.get(n)&&field(n))field(n).value=params.get(n)});
-    const run=async()=>{out.innerHTML=`<div class="loading">${esc(t.loading)}</div>`;const type=field('type').value,format=field('format')?.value||null,country=field('country').value||null,theme=field('theme').value,sort=field('sort').value,status=field('status').value||null,term=q('#discoverQ').value.trim();try{let arr=term?await searchMedia(term,{type,format,country,status,sort:[sort]}):await fetchCategorySafe(theme,{type,format,country,status,sort:[sort,'POPULARITY_DESC']});arr=sortMedia(arr,sort,false).slice(0,50);const own=term&&norm(cfg.originalWork?.title||'Forgotten Source').includes(norm(term));if(arr.length)out.innerHTML=cardsWithOriginal(arr);else if(own&&cfg.originalWork?.enabled)out.innerHTML=originalCard();else out.innerHTML=`<div class="empty">${esc(t.no_results)}</div>`}catch(e){console.error(e);out.innerHTML=`<div class="error">${esc(t.error)}</div>`}};
+    const run=async()=>{out.innerHTML=`<div class="loading">${esc(t.loading)}</div>`;const type=field('type').value,format=field('format')?.value||null,country=field('country').value||null,theme=field('theme').value,sort=field('sort').value,status=field('status').value||null,term=q('#discoverQ').value.trim();try{let arr=term?await searchMediaDisplay(term,{type,format,country,status,sort:[sort]}):await fetchCategoryDisplay(theme,{type,format,country,status,sort:[sort,'POPULARITY_DESC']});arr=sortMedia(arr,sort,false).slice(0,50);const own=term&&norm(cfg.originalWork?.title||'Forgotten Source').includes(norm(term));if(arr.length)out.innerHTML=cardsWithOriginal(arr);else if(own&&cfg.originalWork?.enabled)out.innerHTML=originalCard();else out.innerHTML=`<div class="empty">${esc(t.no_results)}</div>`}catch(e){console.error(e);out.innerHTML=`<div class="error">${esc(t.error)}</div>`}};
     field('type')?.addEventListener('change',()=>{const f=field('format');if(f)f.disabled=field('type').value==='ANIME'});
     form.addEventListener('submit',e=>{e.preventDefault();const p=new URLSearchParams();['type','format','country','theme','sort','status'].forEach(n=>{const v=field(n)?.value;if(v)p.set(n,v)});const term=q('#discoverQ').value.trim();if(term)p.set('q',term);history.replaceState(null,'','?'+p.toString());run()}); run();}
   renderDiscover();
