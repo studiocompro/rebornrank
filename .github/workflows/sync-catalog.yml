@@ -1,0 +1,42 @@
+name: Sync RebornRank catalogue
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1"
+  push:
+    paths:
+      - "sync_catalog.py"
+      - ".github/workflows/sync-catalog.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Enrich static catalogue from AniList
+        run: python sync_catalog.py
+
+      - name: Commit refreshed catalogue
+        shell: bash
+        run: |
+          if git diff --quiet -- catalog.json; then
+            echo "No catalogue changes."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add catalog.json
+          git commit -m "Update RebornRank local catalogue [skip ci]"
+          git push
