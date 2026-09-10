@@ -30,3 +30,6 @@ Les données AniList sont chargées à la demande et mises en cache localement. 
 - AniList autorise actuellement l’usage commercial gratuit jusqu’au seuil indiqué dans ses conditions ; au-delà, vérifier/obtenir la licence commerciale applicable directement auprès d’AniList.
 - La disponibilité d’une URL de couverture dans une API ne remplace pas les droits d’auteur sur l’illustration. Pour un usage commercial à grande échelle, vérifier les conditions des ayants droit / éditeurs et la politique de la source d’image.
 - Ne pas utiliser MangaDex comme source de données pour cette version financée par publicité sans revalider ses conditions.
+
+
+V3 correction: all main rankings now mix ANIME + MANGA/MANHWA/MANHUA by default; media-specific filters remain available.
